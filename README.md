@@ -20,7 +20,7 @@ The model incorporates Kramers-Kronig relations as physics-based constraints to 
 ## Repository Structure
 
 ```
-mt-pcnn/
+model/
 ├── main.py                      # Main pipeline script
 ├── models.py                    # Neural network architecture
 ├── physics_constraints.py       # Kramers-Kronig relations and c-value estimation
