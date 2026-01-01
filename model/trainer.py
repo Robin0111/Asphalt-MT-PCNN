@@ -2,7 +2,7 @@
 Training Module
 
 This module contains the training logic for MT-PCNN including:
-- Single model training with physics constraints
+- Model training with physics constraints
 - Random restart strategy
 - Cross-validation
 """
