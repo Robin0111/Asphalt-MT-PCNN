@@ -6,7 +6,7 @@ This script orchestrates the complete workflow for:
 2. C value estimation
 3. Model training with random restarts
 4. Cross-validation
-5. Hyperparameter optimization (optional)
+5. Hyperparameter optimization
 6. Sensitivity analysis
 7. Results saving
 """
