@@ -1,6 +1,6 @@
 
 # MT-PCNN: Multi-Task Physics-Constrained Neural Network
-A physics-informed neural network for predicting dynamic modulus and phase angle of asphalt mixtures using Kramers-Kronig relations as physical constraints.
+A physics-constrained neural network for predicting dynamic modulus and phase angle of asphalt mixtures using Kramers-Kronig relations as physical constraints.
 
 ## Overview
 
@@ -12,7 +12,7 @@ The model incorporates Kramers-Kronig relations as physics-based constraints to 
 
 ### Key Features
 
-- **Physics-Informed Learning**: Incorporates Kramers-Kronig relations as soft constraints
+- **Physics-Constrained Learning**: Incorporates Kramers-Kronig relations as soft constraints
 - **Implicit Parameter Estimation**: Automatically estimates material-specific constants from data
 - **Random Restart Strategy**: Avoids local minima through multiple training initializations
 - **Bayesian Optimization**: Automated hyperparameter tuning using Gaussian Processes
