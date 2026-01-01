@@ -5,19 +5,17 @@ A multi-task physics-constrained neural network for predicting dynamic modulus a
 ## Overview
 
 This repository implements a Multi-Task Physics-Constrained Neural Network (MT-PCNN) that simultaneously predicts:
-- *Dynamic Modulus (|E*|)*: Material stiffness under dynamic loading
-- *Phase Angle*: Viscoelastic phase lag
+- Dynamic Modulus: Material stiffness under dynamic loading
+- Phase Angle: Viscoelastic phase lag
 
 The model incorporates Kramers-Kronig relations as physics-based constraints to ensure thermodynamic consistency between predictions.
 
 ### Key Features
 
 - **Physics-Constrained Learning**: Incorporates Kramers-Kronig relations as soft constraints
-- **Implicit Parameter Estimation**: Automatically estimates material-specific constants from data
 - **Random Restart Strategy**: Avoids local minima through multiple training initializations
 - **Bayesian Optimization**: Automated hyperparameter tuning using Gaussian Processes
 - **Comprehensive Analysis**: Includes cross-validation and Sobol sensitivity analysis
-- **Modular Design**: Clean, well-documented, and easy to extend
 
 ## Repository Structure
 
@@ -72,7 +70,7 @@ The model expects an Excel file (`EX_data.xlsx`):
 - **Column 1**: Dynamic modulus in psi
 - **Column 2**: Phase angle in radians
 - **Column 3**: Angular frequency in rad/s
-- **Columns 4+**: Mixture properties (e.g., binder content, air voids, temperature)
+- **Columns 4+**: Mixture properties (e.g., binder content, air voids)
 
 
 ```
