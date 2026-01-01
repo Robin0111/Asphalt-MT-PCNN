@@ -1,1 +1,1822 @@
+"""
+Configuration File for MT-PCNN
 
+This file contains default configurations and can be imported
+to customize model behavior without modifying source code.
+"""
+
+# =============================================================================
+# DATA CONFIGURATION
+# =============================================================================
+DATA_CONFIG = {
+    'file_path': 'Ex_data.xlsx',
+    'test_size': 0.2,
+    'random_state': 42,
+}
+
+# =============================================================================
+# MODEL ARCHITECTURE
+# =============================================================================
+MODEL_CONFIG = {
+    'hidden_layers': 3,
+    'neurons_per_layer': 64,
+    'activation': 'tanh',  # Options: 'tanh', 'relu', 'swish'
+}
+
+# =============================================================================
+# TRAINING CONFIGURATION
+# =============================================================================
+TRAINING_CONFIG = {
+    'epochs': 3000,
+    'learning_rate': 0.001,
+    'physics_weight': 0.1,
+    'batch_size': 32,
+    'patience': 200,  # Early stopping patience
+    'n_restarts': 5,  # Number of random restarts
+    'val_split': 0.2,  # Validation split for random restarts
+}
+
+# =============================================================================
+# CROSS-VALIDATION CONFIGURATION
+# =============================================================================
+CV_CONFIG = {
+    'n_folds': 5,
+    'epochs': 2000,
+    'shuffle': True,
+    'random_state': 42,
+}
+
+# =============================================================================
+# BAYESIAN OPTIMIZATION CONFIGURATION
+# =============================================================================
+OPTIMIZATION_CONFIG = {
+    'n_calls': 15,  # Number of optimization iterations
+    'random_state': 42,
+    'acq_func': 'EI',  # Acquisition function: 'EI', 'PI', 'LCB'
+    
+    # Search space
+    'search_space': {
+        'hidden_layers': (2, 5),
+        'neurons_per_layer': (16, 512),
+        'learning_rate': (0.0001, 0.01),  # Log-uniform
+        'physics_weight': (0.1, 1.0),
+        'activation': ['tanh', 'relu', 'swish'],
+    },
+    
+    # Training settings for optimization
+    'opt_epochs': 500,
+    'opt_patience': 50,
+}
+
+# =============================================================================
+# SENSITIVITY ANALYSIS CONFIGURATION
+# =============================================================================
+SOBOL_CONFIG = {
+    'n_samples': 1024,
+    'calc_second_order': True,
+}
+
+# =============================================================================
+# C-VALUE ESTIMATION CONFIGURATION
+# =============================================================================
+C_VALUE_CONFIG = {
+    'c_min': 0.5,   # Minimum allowed c value
+    'c_max': 1.5,   # Maximum allowed c value
+    'default_c': 1.0,  # Default if estimation fails
+    'min_derivative': 1e-6,  # Minimum derivative for valid estimation
+}
+
+# =============================================================================
+# OUTPUT CONFIGURATION
+# =============================================================================
+OUTPUT_CONFIG = {
+    'model_save_dir': 'saved_models',
+    'model_name': 'mt_pcnn_model',
+    'results_filename': 'MT_PCNN_Results.xlsx',
+}
+
+# =============================================================================
+# DEVICE CONFIGURATION
+# =============================================================================
+DEVICE_CONFIG = {
+    'use_cuda': True,  # Set to False to force CPU
+}
+
+
+def get_config(config_name):
+
+    configs = {
+        'data': DATA_CONFIG,
+        'model': MODEL_CONFIG,
+        'training': TRAINING_CONFIG,
+        'cv': CV_CONFIG,
+        'optimization': OPTIMIZATION_CONFIG,
+        'sobol': SOBOL_CONFIG,
+        'c_value': C_VALUE_CONFIG,
+        'output': OUTPUT_CONFIG,
+        'device': DEVICE_CONFIG,
+    }
+    
+    return configs.get(config_name, {})
+
+
+# Example usage in main.py:
+# from config import MODEL_CONFIG, TRAINING_CONFIG
+# model_params = MODEL_CONFIG
+# trainer.train_model(**TRAINING_CONFIG)
+
+"""
+Data Loading and Preprocessing Module
+
+This module handles data loading from Excel files, preprocessing, normalization,
+and train-test splitting for the MT-PCNN model.
+"""
+
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+
+
+class DataLoader:
+
+    def __init__(self):
+        self.scaler_X = StandardScaler()
+        self.scaler_log_modulus = StandardScaler()
+        self.scaler_phase_angle = StandardScaler()
+        self.feature_names = None
+        
+        # Data arrays
+        self.mixture_ids = None
+        self.dynamic_modulus = None
+        self.phase_angle = None
+        self.omega = None
+        self.log_omega = None
+        self.log_modulus = None
+        self.mixture_properties = None
+        self.X = None
+        self.y = None
+    
+    def load_data(self, file_path='Ex_data.xlsx', sheet_name='Sheet1'):
+
+        try:
+            # Load main data from Excel
+            main_data = pd.read_excel(file_path, sheet_name=sheet_name)
+            
+            # Extract columns
+            self.mixture_ids = main_data.iloc[:, 0].values
+            self.dynamic_modulus = main_data.iloc[:, 1].values  # psi
+            self.phase_angle = main_data.iloc[:, 2].values      # rad
+            self.omega = main_data.iloc[:, 3].values            # rad/s
+            self.mixture_properties = main_data.iloc[:, 4:].values
+            
+            # Store feature names
+            self.feature_names = ['log_omega'] + list(main_data.columns[4:])
+            
+            # Convert to log scale
+            self.log_modulus = np.log10(self.dynamic_modulus)
+            self.log_omega = np.log10(self.omega)
+            
+            # Create input features (log_omega + mixture properties)
+            self.X = np.column_stack([
+                self.log_omega.reshape(-1, 1),
+                self.mixture_properties
+            ])
+            
+            # Create target matrix
+            self.y = np.column_stack([self.log_modulus, self.phase_angle])
+            
+            print(f"\nData loaded successfully from {file_path}")
+            print(f"Total samples: {len(self.X)}")
+            print(f"Number of features: {self.X.shape[1]}")
+            print(f"Number of unique mixtures: {len(np.unique(self.mixture_ids))}")
+            print(f"Feature names: {self.feature_names}")
+            
+            return {
+                'X': self.X,
+                'y': self.y,
+                'mixture_ids': self.mixture_ids,
+                'log_omega': self.log_omega,
+                'log_modulus': self.log_modulus,
+                'phase_angle': self.phase_angle
+            }
+            
+        except Exception as e:
+            raise ValueError(f"Error loading data from {file_path}: {e}")
+    
+    def prepare_data(self, test_size=0.2, random_state=42):
+
+        if self.X is None or self.y is None:
+            raise ValueError("Data not loaded. Call load_data() first.")
+        
+        # Split data
+        indices = np.arange(len(self.X))
+        
+        (X_train, X_test, 
+         y_train, y_test,
+         train_indices, test_indices,
+         train_mixture_ids, test_mixture_ids) = train_test_split(
+            self.X, self.y, indices, self.mixture_ids,
+            test_size=test_size,
+            random_state=random_state,
+            stratify=None  # Could stratify by mixture_id if needed
+        )
+        
+        # Fit scalers on training data
+        self.scaler_X.fit(X_train)
+        self.scaler_log_modulus.fit(y_train[:, 0].reshape(-1, 1))
+        self.scaler_phase_angle.fit(y_train[:, 1].reshape(-1, 1))
+        
+        # Transform data
+        X_train_scaled = self.scaler_X.transform(X_train)
+        X_test_scaled = self.scaler_X.transform(X_test)
+        
+        y_train_log_scaled = self.scaler_log_modulus.transform(
+            y_train[:, 0].reshape(-1, 1)
+        )
+        y_test_log_scaled = self.scaler_log_modulus.transform(
+            y_test[:, 0].reshape(-1, 1)
+        )
+        
+        y_train_phase_scaled = self.scaler_phase_angle.transform(
+            y_train[:, 1].reshape(-1, 1)
+        )
+        y_test_phase_scaled = self.scaler_phase_angle.transform(
+            y_test[:, 1].reshape(-1, 1)
+        )
+        
+        y_train_scaled = np.column_stack([
+            y_train_log_scaled.ravel(),
+            y_train_phase_scaled.ravel()
+        ])
+        y_test_scaled = np.column_stack([
+            y_test_log_scaled.ravel(),
+            y_test_phase_scaled.ravel()
+        ])
+        
+        print(f"\nData split into train/test sets:")
+        print(f"Training samples: {len(X_train)} ({(1-test_size)*100:.0f}%)")
+        print(f"Test samples: {len(X_test)} ({test_size*100:.0f}%)")
+        
+        return {
+            'X_train_scaled': X_train_scaled,
+            'X_test_scaled': X_test_scaled,
+            'y_train_scaled': y_train_scaled,
+            'y_test_scaled': y_test_scaled,
+            'X_train': X_train,
+            'X_test': X_test,
+            'y_train': y_train,
+            'y_test': y_test,
+            'train_indices': train_indices,
+            'test_indices': test_indices,
+            'train_mixture_ids': train_mixture_ids,
+            'test_mixture_ids': test_mixture_ids
+        }
+    
+    def inverse_transform_predictions(self, predictions_scaled):
+
+        log_modulus = self.scaler_log_modulus.inverse_transform(
+            predictions_scaled[:, 0].reshape(-1, 1)
+        ).ravel()
+        
+        phase_angle = self.scaler_phase_angle.inverse_transform(
+            predictions_scaled[:, 1].reshape(-1, 1)
+        ).ravel()
+        
+        return np.column_stack([log_modulus, phase_angle])
+
+"""
+Evaluation and Metrics Module
+
+This module provides functions for model evaluation, performance metrics,
+and cross-validation.
+"""
+
+import numpy as np
+import torch
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+from sklearn.model_selection import KFold
+
+
+def evaluate_model(model, X_test, y_test, scaler_log_modulus, scaler_phase_angle, device='cpu'):
+
+    model.eval()
+    device = torch.device(device)
+    
+    with torch.no_grad():
+        X_test_tensor = torch.FloatTensor(X_test).to(device)
+        predictions_scaled = model(X_test_tensor).cpu().numpy()
+    
+    # Inverse transform predictions
+    pred_log_modulus = scaler_log_modulus.inverse_transform(
+        predictions_scaled[:, 0].reshape(-1, 1)
+    ).ravel()
+    
+    pred_phase_angle = scaler_phase_angle.inverse_transform(
+        predictions_scaled[:, 1].reshape(-1, 1)
+    ).ravel()
+    
+    predictions = np.column_stack([pred_log_modulus, pred_phase_angle])
+    
+    # Extract true values
+    true_log_modulus = y_test[:, 0]
+    true_phase_angle = y_test[:, 1]
+    
+    # Calculate metrics for log modulus
+    r2_log = r2_score(true_log_modulus, pred_log_modulus)
+    rmse_log = np.sqrt(mean_squared_error(true_log_modulus, pred_log_modulus))
+    mae_log = mean_absolute_error(true_log_modulus, pred_log_modulus)
+    
+    # Calculate metrics for phase angle
+    r2_phase = r2_score(true_phase_angle, pred_phase_angle)
+    rmse_phase = np.sqrt(mean_squared_error(true_phase_angle, pred_phase_angle))
+    mae_phase = mean_absolute_error(true_phase_angle, pred_phase_angle)
+    
+    return {
+        'predictions': predictions,
+        'r2_log': r2_log,
+        'r2_phase': r2_phase,
+        'rmse_log': rmse_log,
+        'rmse_phase': rmse_phase,
+        'mae_log': mae_log,
+        'mae_phase': mae_phase
+    }
+
+
+def print_evaluation_results(results, title="Model Evaluation Results"):
+
+    print(f"\n{title}")
+    print("=" * 60)
+    print(f"{'Metric':<30} {'Log Modulus':<15} {'Phase Angle':<15}")
+    print("-" * 60)
+    print(f"{'R² Score':<30} {results['r2_log']:>14.4f} {results['r2_phase']:>14.4f}")
+    print(f"{'RMSE':<30} {results['rmse_log']:>14.4f} {results['rmse_phase']:>14.4f}")
+    print(f"{'MAE':<30} {results['mae_log']:>14.4f} {results['mae_phase']:>14.4f}")
+    print("=" * 60)
+
+
+def cross_validate(model_class, model_params, X, y, mixture_ids, c_values_dict,
+                   scaler_X, scaler_log_modulus, scaler_phase_angle,
+                   n_folds=5, epochs=1000, learning_rate=0.001, 
+                   physics_weight=0.1, batch_size=32, device='cpu'):
+
+    from trainer import Trainer
+    
+    kfold = KFold(n_splits=n_folds, shuffle=True, random_state=42)
+    cv_results = []
+    
+    print(f"\nPerforming {n_folds}-fold cross-validation...")
+    print("=" * 60)
+    
+    for fold, (train_idx, val_idx) in enumerate(kfold.split(X), 1):
+        print(f"\nFold {fold}/{n_folds}")
+        print("-" * 60)
+        
+        # Split data
+        X_train_fold = X[train_idx]
+        y_train_fold = y[train_idx]
+        X_val_fold = X[val_idx]
+        y_val_fold = y[val_idx]
+        mixture_ids_train = mixture_ids[train_idx]
+        
+        # Scale data
+        scaler_X_fold = type(scaler_X)()
+        scaler_log_fold = type(scaler_log_modulus)()
+        scaler_phase_fold = type(scaler_phase_angle)()
+        
+        X_train_scaled = scaler_X_fold.fit_transform(X_train_fold)
+        X_val_scaled = scaler_X_fold.transform(X_val_fold)
+        
+        y_train_log_scaled = scaler_log_fold.fit_transform(
+            y_train_fold[:, 0].reshape(-1, 1)
+        )
+        y_train_phase_scaled = scaler_phase_fold.fit_transform(
+            y_train_fold[:, 1].reshape(-1, 1)
+        )
+        y_train_scaled = np.column_stack([
+            y_train_log_scaled.ravel(),
+            y_train_phase_scaled.ravel()
+        ])
+        
+        # Train model
+        trainer = Trainer(model_params, device=device)
+        
+        # Simple training for CV (no restarts to save time)
+        model, _, _ = trainer.train_single_model(
+            X_train_scaled, y_train_scaled,
+            X_val_scaled, y_train_scaled[:len(X_val_scaled)],  # Dummy validation
+            mixture_ids_train, c_values_dict,
+            epochs=epochs,
+            learning_rate=learning_rate,
+            physics_weight=physics_weight,
+            batch_size=batch_size,
+            verbose=False
+        )
+        
+        # Evaluate
+        results = evaluate_model(
+            model, X_val_scaled, y_val_fold,
+            scaler_log_fold, scaler_phase_fold, device
+        )
+        
+        results['fold'] = fold
+        cv_results.append(results)
+        
+        print(f"Fold {fold} - R²: {results['r2_log']:.4f} (log), "
+              f"{results['r2_phase']:.4f} (phase)")
+        print(f"Fold {fold} - RMSE: {results['rmse_log']:.4f} (log), "
+              f"{results['rmse_phase']:.4f} (phase)")
+    
+    # Print summary
+    print("\n" + "=" * 60)
+    print("Cross-Validation Summary")
+    print("=" * 60)
+    
+    avg_r2_log = np.mean([r['r2_log'] for r in cv_results])
+    avg_r2_phase = np.mean([r['r2_phase'] for r in cv_results])
+    avg_rmse_log = np.mean([r['rmse_log'] for r in cv_results])
+    avg_rmse_phase = np.mean([r['rmse_phase'] for r in cv_results])
+    
+    std_r2_log = np.std([r['r2_log'] for r in cv_results])
+    std_r2_phase = np.std([r['r2_phase'] for r in cv_results])
+    std_rmse_log = np.std([r['rmse_log'] for r in cv_results])
+    std_rmse_phase = np.std([r['rmse_phase'] for r in cv_results])
+    
+    print(f"Average R² (log modulus): {avg_r2_log:.4f} ± {std_r2_log:.4f}")
+    print(f"Average R² (phase angle): {avg_r2_phase:.4f} ± {std_r2_phase:.4f}")
+    print(f"Average RMSE (log modulus): {avg_rmse_log:.4f} ± {std_rmse_log:.4f}")
+    print(f"Average RMSE (phase angle): {avg_rmse_phase:.4f} ± {std_rmse_phase:.4f}")
+    print("=" * 60)
+    
+    return cv_results
+
+"""
+Main Script for MT-PCNN Training and Analysis
+
+This script orchestrates the complete workflow for:
+1. Data loading and preprocessing
+2. C value estimation
+3. Model training with random restarts
+4. Cross-validation
+5. Hyperparameter optimization (optional)
+6. Sensitivity analysis
+7. Results saving
+"""
+
+import torch
+import numpy as np
+import warnings
+
+from data_loader import DataLoader
+from physics_constraints import estimate_c_values
+from models import PCNNModel
+from trainer import Trainer
+from evaluation import evaluate_model, print_evaluation_results, cross_validate
+from sensitivity_analysis import sobol_sensitivity_analysis
+from optimization import bayesian_optimization, OptimizationObjective
+from utils import save_model, save_results_to_excel
+
+warnings.filterwarnings('ignore')
+
+
+def main():
+    """
+    Main function to run the complete MT-PCNN pipeline.
+    """
+    print("=" * 80)
+    print("MT-PCNN: Multi-Task Physics-Constrained Neural Network")
+    print("For Asphalt Mixture Dynamic Modulus and Phase Angle Prediction")
+    print("With Implicit C Values Estimated from Data")
+    print("=" * 80)
+    
+    # Set device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"\nUsing device: {device}")
+    
+    # =========================================================================
+    # 1. DATA LOADING AND PREPARATION
+    # =========================================================================
+    print("\n" + "=" * 80)
+    print("STEP 1: DATA LOADING AND PREPARATION")
+    print("=" * 80)
+    
+    # Initialize data loader
+    data_loader = DataLoader()
+    
+    # Load data from Excel
+    data = data_loader.load_data('Ex_data.xlsx', sheet_name='Sheet1')
+    
+    # Estimate c values from data
+    c_values_dict = estimate_c_values(
+        data['mixture_ids'],
+        data['log_omega'],
+        data['log_modulus'],
+        data['phase_angle']
+    )
+    
+    # Prepare train/test split
+    split_data = data_loader.prepare_data(test_size=0.2, random_state=42)
+    
+    X_train_scaled = split_data['X_train_scaled']
+    X_test_scaled = split_data['X_test_scaled']
+    y_train_scaled = split_data['y_train_scaled']
+    y_test_scaled = split_data['y_test_scaled']
+    y_test = split_data['y_test']
+    train_mixture_ids = split_data['train_mixture_ids']
+    
+    # =========================================================================
+    # 2. HYPERPARAMETER OPTIMIZATION (OPTIONAL)
+    # =========================================================================
+    print("\n" + "=" * 80)
+    print("STEP 2: HYPERPARAMETER OPTIMIZATION")
+    print("=" * 80)
+    
+    # Default parameters
+    model_params = {
+        'hidden_layers': 3,
+        'neurons_per_layer': 64,
+        'activation': 'tanh'
+    }
+    
+    run_optimization = input("\nRun Bayesian optimization for hyperparameter tuning? (y/n): ").lower() == 'y'
+    
+    optimization_history = []
+    
+    if run_optimization:
+        n_calls = int(input("Number of optimization calls (default 15): ") or "15")
+        
+        # Create trainer for optimization
+        trainer = Trainer(model_params, device=device)
+        
+        # Create optimization objective
+        obj = OptimizationObjective(
+            trainer, X_train_scaled, y_train_scaled, train_mixture_ids,
+            c_values_dict, data_loader.scaler_X,
+            data_loader.scaler_log_modulus, data_loader.scaler_phase_angle
+        )
+        
+        # Run optimization
+        best_params, opt_result = bayesian_optimization(obj, n_calls=n_calls)
+        
+        model_params.update(best_params)
+        optimization_history = obj.optimization_history
+    else:
+        print("\nUsing default hyperparameters...")
+        model_params['learning_rate'] = 0.001
+        model_params['physics_weight'] = 0.1
+    
+    # =========================================================================
+    # 3. MODEL TRAINING WITH RANDOM RESTARTS
+    # =========================================================================
+    print("\n" + "=" * 80)
+    print("STEP 3: MODEL TRAINING WITH RANDOM RESTARTS")
+    print("=" * 80)
+    
+    # Get training parameters
+    n_restarts = int(input("Number of random restarts for final training (default 5): ") or "5")
+    
+    learning_rate = model_params.get('learning_rate', 0.001)
+    physics_weight = model_params.get('physics_weight', 0.1)
+    
+    # Create trainer
+    trainer = Trainer(model_params, device=device)
+    
+    # Train with random restarts
+    best_model, best_loss = trainer.train_with_random_restarts(
+        X_train_scaled, y_train_scaled, train_mixture_ids,
+        c_values_dict,
+        n_restarts=n_restarts,
+        val_split=0.2,
+        epochs=3000,
+        learning_rate=learning_rate,
+        physics_weight=physics_weight,
+        batch_size=32,
+        patience=200,
+        verbose=True
+    )
+    
+    # =========================================================================
+    # 4. CROSS-VALIDATION
+    # =========================================================================
+    print("\n" + "=" * 80)
+    print("STEP 4: CROSS-VALIDATION")
+    print("=" * 80)
+    
+    run_cv = input("\nPerform 5-fold cross-validation? (y/n): ").lower() == 'y'
+    
+    cv_results = []
+    if run_cv:
+        cv_results = cross_validate(
+            PCNNModel, model_params,
+            split_data['X_train'], split_data['y_train'],
+            train_mixture_ids, c_values_dict,
+            data_loader.scaler_X,
+            data_loader.scaler_log_modulus,
+            data_loader.scaler_phase_angle,
+            n_folds=5,
+            epochs=2000,
+            learning_rate=learning_rate,
+            physics_weight=physics_weight,
+            device=device
+        )
+    
+    # =========================================================================
+    # 5. TEST SET EVALUATION
+    # =========================================================================
+    print("\n" + "=" * 80)
+    print("STEP 5: TEST SET EVALUATION")
+    print("=" * 80)
+    
+    test_results = evaluate_model(
+        best_model, X_test_scaled, y_test,
+        data_loader.scaler_log_modulus,
+        data_loader.scaler_phase_angle,
+        device=device
+    )
+    
+    # Add true values for saving
+    test_results['true_values'] = y_test
+    
+    print_evaluation_results(test_results, "Final Model Test Results")
+    
+    # =========================================================================
+    # 6. SENSITIVITY ANALYSIS
+    # =========================================================================
+    print("\n" + "=" * 80)
+    print("STEP 6: SOBOL SENSITIVITY ANALYSIS")
+    print("=" * 80)
+    
+    run_sobol = input("\nPerform Sobol sensitivity analysis? (y/n): ").lower() == 'y'
+    
+    sobol_results = None
+    if run_sobol:
+        n_sobol_samples = int(input("Number of Sobol samples (default 1024): ") or "1024")
+        
+        sobol_results = sobol_sensitivity_analysis(
+            best_model,
+            split_data['X_train'],
+            data_loader.feature_names,
+            n_samples=n_sobol_samples,
+            scaler_X=data_loader.scaler_X,
+            device=device
+        )
+    
+    # =========================================================================
+    # 7. SAVE RESULTS
+    # =========================================================================
+    print("\n" + "=" * 80)
+    print("STEP 7: SAVING RESULTS")
+    print("=" * 80)
+    
+    # Save model
+    model_dir = save_model(
+        best_model, model_params,
+        data_loader.scaler_X,
+        data_loader.scaler_log_modulus,
+        data_loader.scaler_phase_angle,
+        c_values_dict,
+        data_loader.feature_names,
+        save_dir='saved_models',
+        model_name='mt_pcnn_model'
+    )
+    
+    # Save all results to Excel
+    excel_filename = save_results_to_excel(
+        'MT_PCNN_Results.xlsx',
+        test_results=test_results,
+        cv_results=cv_results,
+        sobol_results=sobol_results,
+        c_values_dict=c_values_dict,
+        model_params=model_params,
+        optimization_history=optimization_history
+    )
+    
+    # =========================================================================
+    # SUMMARY
+    # =========================================================================
+    print("\n" + "=" * 80)
+    print("MT-PCNN TRAINING AND ANALYSIS COMPLETED!")
+    print("=" * 80)
+    print(f"\nModel saved to: {model_dir}")
+    print(f"Results saved to: {excel_filename}")
+    
+    print("\nSummary of completed tasks:")
+    print("  ✓ Estimated implicit c values from data for each mixture type")
+    print("  ✓ Removed dependency on external c value parameters")
+    print("  ✓ Implemented multiple random restarts to avoid local minima")
+    if run_cv:
+        print("  ✓ Performed 5-fold cross-validation with detailed results")
+    if run_sobol:
+        print("  ✓ Conducted Sobol variance-based sensitivity analysis")
+    if run_optimization:
+        print("  ✓ Performed Bayesian hyperparameter optimization")
+    print("  ✓ Saved comprehensive results to Excel file")
+    
+    print("\nExcel file contains:")
+    print("  - Test predictions and errors")
+    print("  - Test metrics (R², RMSE, MAE)")
+    if run_cv:
+        print("  - Cross-validation results (per fold and summary)")
+    print("  - Estimated c values for each mixture type")
+    if run_sobol:
+        print("  - Sobol indices (first-order, total-order, second-order)")
+    print("  - Model hyperparameters")
+    if run_optimization:
+        print("  - Optimization history")
+    
+    print("\n" + "=" * 80)
+    print("Thank you for using MT-PCNN!")
+    print("=" * 80)
+
+
+if __name__ == "__main__":
+    main()
+
+"""
+Neural Network Models for MT-PCNN
+
+This module contains the neural network architecture definitions for the
+Multi-Task Physics-Constrained Neural Network (MT-PCNN) for asphalt mixture
+property prediction.
+"""
+
+import torch
+import torch.nn as nn
+
+
+class PCNNModel(nn.Module):
+
+    
+    def __init__(self, input_dim, hidden_layers, neurons_per_layer, activation='tanh'):
+        super(PCNNModel, self).__init__()
+        
+        self.input_dim = input_dim
+        self.hidden_layers = hidden_layers
+        self.neurons_per_layer = neurons_per_layer
+        
+        # Build network layers
+        layers = []
+        
+        # Input layer
+        layers.append(nn.Linear(input_dim, neurons_per_layer))
+        layers.append(self._get_activation(activation))
+        
+        # Hidden layers
+        for _ in range(hidden_layers):
+            layers.append(nn.Linear(neurons_per_layer, neurons_per_layer))
+            layers.append(self._get_activation(activation))
+        
+        # Output layer (2 outputs: log|E*| and phase angle)
+        layers.append(nn.Linear(neurons_per_layer, 2))
+        
+        self.network = nn.Sequential(*layers)
+        
+        # Initialize weights
+        self.init_weights()
+    
+    def _get_activation(self, activation):
+
+        if activation == 'tanh':
+            return nn.Tanh()
+        elif activation == 'relu':
+            return nn.ReLU()
+        elif activation == 'swish':
+            return nn.SiLU()
+        else:
+            raise ValueError(f"Unknown activation function: {activation}")
+    
+    def init_weights(self):
+        """
+        Initialize network weights using Xavier (Glorot) normal initialization.
+        Biases are initialized to zero.
+        """
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_normal_(m.weight)
+                nn.init.constant_(m.bias, 0)
+    
+    def forward(self, x):
+
+        return self.network(x)
+
+"""
+Hyperparameter Optimization Module
+
+This module implements Bayesian optimization using Gaussian Processes
+for automated hyperparameter tuning of the MT-PCNN model.
+"""
+
+import numpy as np
+from skopt import gp_minimize
+from skopt.space import Real, Integer, Categorical
+from skopt.utils import use_named_args
+
+
+def bayesian_optimization(train_function, n_calls=20, random_state=42):
+
+    # Define hyperparameter search space
+    space = [
+        Integer(2, 5, name='hidden_layers'),
+        Integer(16, 512, name='neurons_per_layer'),
+        Real(0.0001, 0.01, name='learning_rate', prior='log-uniform'),
+        Real(0.1, 1.0, name='physics_weight'),
+        Categorical(['tanh', 'relu', 'swish'], name='activation')
+    ]
+    
+    @use_named_args(space)
+    def objective(**params):
+        """Wrapper function for optimization."""
+        return train_function(**params)
+    
+    print("\nStarting Bayesian optimization...")
+    print("=" * 60)
+    print(f"Search space:")
+    print(f"  hidden_layers: [2, 5]")
+    print(f"  neurons_per_layer: [16, 512]")
+    print(f"  learning_rate: [0.0001, 0.01] (log-uniform)")
+    print(f"  physics_weight: [0.1, 1.0]")
+    print(f"  activation: ['tanh', 'relu', 'swish']")
+    print(f"\nTotal optimization calls: {n_calls}")
+    print("=" * 60)
+    
+    # Run optimization
+    result = gp_minimize(
+        func=objective,
+        dimensions=space,
+        n_calls=n_calls,
+        n_initial_points=max(5, n_calls // 4),
+        random_state=random_state,
+        verbose=True,
+        acq_func='EI',  # Expected Improvement
+        n_jobs=1
+    )
+    
+    # Extract best parameters
+    best_params = {
+        'hidden_layers': result.x[0],
+        'neurons_per_layer': result.x[1],
+        'learning_rate': result.x[2],
+        'physics_weight': result.x[3],
+        'activation': result.x[4]
+    }
+    
+    print("\n" + "=" * 60)
+    print("Bayesian optimization completed!")
+    print("=" * 60)
+    print(f"Best hyperparameters found:")
+    for key, value in best_params.items():
+        print(f"  {key}: {value}")
+    print(f"\nBest score (to minimize): {result.fun:.6f}")
+    print("=" * 60)
+    
+    return best_params, result
+
+
+class OptimizationObjective:
+    
+    def __init__(self, trainer, X_train, y_train, train_mixture_ids,
+                 c_values_dict, scaler_X, scaler_log_modulus, scaler_phase_angle):
+        self.trainer = trainer
+        self.X_train = X_train
+        self.y_train = y_train
+        self.train_mixture_ids = train_mixture_ids
+        self.c_values_dict = c_values_dict
+        self.scaler_X = scaler_X
+        self.scaler_log_modulus = scaler_log_modulus
+        self.scaler_phase_angle = scaler_phase_angle
+        self.optimization_history = []
+    
+    def __call__(self, hidden_layers, neurons_per_layer, learning_rate,
+                 physics_weight, activation):
+
+        try:
+            params = {
+                'hidden_layers': hidden_layers,
+                'neurons_per_layer': neurons_per_layer,
+                'learning_rate': learning_rate,
+                'physics_weight': physics_weight,
+                'activation': activation
+            }
+            
+            print(f"\nTesting: {params}")
+            
+            # Update trainer parameters
+            self.trainer.model_params = params
+            
+            # Train model with reduced epochs for optimization speed
+            model, val_loss, _ = self.trainer.train_single_model(
+                self.X_train, self.y_train,
+                self.X_train[:100],  # Small validation set
+                self.y_train[:100],
+                self.train_mixture_ids,
+                self.c_values_dict,
+                epochs=500,  # Shorter for optimization
+                learning_rate=learning_rate,
+                physics_weight=physics_weight,
+                batch_size=32,
+                patience=50,
+                verbose=False
+            )
+            
+            # Calculate score (validation loss)
+            score = val_loss
+            
+            # Check for invalid results
+            if score is None or np.isnan(score) or np.isinf(score):
+                score = 1000.0
+            
+            # Store in history
+            self.optimization_history.append({
+                'hidden_layers': hidden_layers,
+                'neurons_per_layer': neurons_per_layer,
+                'learning_rate': learning_rate,
+                'physics_weight': physics_weight,
+                'activation': activation,
+                'score': score
+            })
+            
+            print(f"Score: {score:.6f}")
+            print("-" * 60)
+            
+            return score
+            
+        except Exception as e:
+            print(f"Error in objective function: {e}")
+            return 1000.0
+
+
+def format_optimization_history(history):
+
+    import pandas as pd
+    
+    if not history:
+        return pd.DataFrame()
+    
+    df = pd.DataFrame(history)
+    
+    # Sort by score (best first)
+    df = df.sort_values('score')
+    
+    # Add rank column
+    df.insert(0, 'Rank', range(1, len(df) + 1))
+    
+    return df
+
+"""
+Physics Constraints Module
+
+This module implements the Kramers-Kronig relations as physics-based constraints
+for the neural network training. These relations provide thermodynamic consistency
+between the dynamic modulus and phase angle of viscoelastic materials.
+"""
+
+import torch
+import numpy as np
+
+
+def estimate_c_values(mixture_ids, log_omega, log_modulus, phase_angle):
+
+    unique_mixtures = np.unique(mixture_ids)
+    c_values_dict = {}
+    
+    print("\nEstimating implicit c values for each mixture type:")
+    print("-" * 60)
+    
+    for mixture_id in unique_mixtures:
+        # Get data for this mixture
+        mask = mixture_ids == mixture_id
+        omega_mix = log_omega[mask]
+        modulus_mix = log_modulus[mask]
+        phase_mix = phase_angle[mask]
+        
+        # Sort by frequency for proper derivative calculation
+        sort_idx = np.argsort(omega_mix)
+        omega_sorted = omega_mix[sort_idx]
+        modulus_sorted = modulus_mix[sort_idx]
+        phase_sorted = phase_mix[sort_idx]
+        
+        # Calculate numerical derivative d(log|E*|)/d(log(ω))
+        d_modulus_d_omega = _compute_derivative(omega_sorted, modulus_sorted)
+        
+        # Calculate c values: c = φ / [(π/2) * d(log|E*|)/d(log(ω))]
+        # Avoid division by very small derivatives
+        valid_mask = np.abs(d_modulus_d_omega) > 1e-6
+        
+        if np.sum(valid_mask) > 0:
+            c_estimates = phase_sorted[valid_mask] / \
+                         ((np.pi / 2) * d_modulus_d_omega[valid_mask])
+            
+            # Use median to be robust against outliers
+            # Clip to reasonable range [0.5, 1.5] based on physical constraints
+            c_value = np.clip(np.median(c_estimates), 0.5, 1.5)
+        else:
+            # Default value if calculation fails
+            c_value = 1.0
+            print(f"  Warning: Using default c=1.0 for mixture {mixture_id}")
+        
+        c_values_dict[mixture_id] = c_value
+        print(f"  Mixture {mixture_id}: c = {c_value:.4f} "
+              f"(based on {np.sum(valid_mask)} valid points)")
+    
+    print("-" * 60)
+    print(f"Average c value across all mixtures: {np.mean(list(c_values_dict.values())):.4f}")
+    print(f"C value range: [{min(c_values_dict.values()):.4f}, "
+          f"{max(c_values_dict.values()):.4f}]")
+    
+    return c_values_dict
+
+
+def _compute_derivative(x, y):
+
+    derivative = np.zeros_like(y)
+    
+    if len(x) > 2:
+        # Central differences for interior points
+        for i in range(1, len(x) - 1):
+            derivative[i] = (y[i+1] - y[i-1]) / (x[i+1] - x[i-1])
+        
+        # Forward difference for first point
+        derivative[0] = (y[1] - y[0]) / (x[1] - x[0])
+        
+        # Backward difference for last point
+        derivative[-1] = (y[-1] - y[-2]) / (x[-1] - x[-2])
+    elif len(x) == 2:
+        # Simple slope for two points
+        slope = (y[1] - y[0]) / (x[1] - x[0])
+        derivative[:] = slope
+    
+    return derivative
+
+
+def kramers_kronig_loss(predictions, inputs, c_values_tensor):
+
+    log_modulus_pred = predictions[:, 0]
+    phase_angle_pred = predictions[:, 1]
+    log_omega = inputs[:, 0]
+    
+    # Enable gradient computation for log_modulus with respect to log_omega
+    log_omega_tensor = log_omega.clone().detach().requires_grad_(True)
+    
+    # Create modified input tensor for gradient computation
+    inputs_grad = inputs.clone()
+    inputs_grad[:, 0] = log_omega_tensor
+    
+    # Recompute predictions with gradient tracking
+    log_modulus_grad = predictions[:, 0].clone()
+    
+    # Compute gradient d(log|E*|)/d(log(ω))
+    gradients = torch.autograd.grad(
+        outputs=log_modulus_grad,
+        inputs=log_omega_tensor,
+        grad_outputs=torch.ones_like(log_modulus_grad),
+        create_graph=True,
+        retain_graph=True
+    )[0]
+    
+    # Kramers-Kronig relation: φ = (π/2) * c * d(log|E*|)/d(log(ω))
+    phase_angle_kk = (np.pi / 2) * c_values_tensor * gradients
+    
+    # Calculate loss (MSE between predicted and K-K derived phase angles)
+    kk_loss = torch.mean((phase_angle_pred - phase_angle_kk) ** 2)
+    
+    return kk_loss
+
+"""
+Quick Start Example for MT-PCNN
+
+This script demonstrates basic usage of the MT-PCNN model
+with minimal configuration.
+"""
+
+import torch
+from data_loader import DataLoader
+from physics_constraints import estimate_c_values
+from models import PCNNModel
+from trainer import Trainer
+from evaluation import evaluate_model, print_evaluation_results
+from utils import save_model, save_results_to_excel
+
+# Set device
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f"Using device: {device}")
+
+# =============================================================================
+# 1. LOAD AND PREPARE DATA
+# =============================================================================
+print("\n" + "=" * 60)
+print("Loading and preparing data...")
+print("=" * 60)
+
+loader = DataLoader()
+data = loader.load_data('Ex_data.xlsx')
+
+# Estimate c values
+c_values_dict = estimate_c_values(
+    data['mixture_ids'],
+    data['log_omega'],
+    data['log_modulus'],
+    data['phase_angle']
+)
+
+# Prepare train/test split
+split_data = loader.prepare_data(test_size=0.2, random_state=42)
+
+# =============================================================================
+# 2. TRAIN MODEL
+# =============================================================================
+print("\n" + "=" * 60)
+print("Training model...")
+print("=" * 60)
+
+# Define model parameters
+model_params = {
+    'hidden_layers': 3,
+    'neurons_per_layer': 64,
+    'activation': 'tanh'
+}
+
+# Create trainer
+trainer = Trainer(model_params, device=device)
+
+# Train with random restarts
+best_model, best_loss = trainer.train_with_random_restarts(
+    X_train=split_data['X_train_scaled'],
+    y_train=split_data['y_train_scaled'],
+    train_mixture_ids=split_data['train_mixture_ids'],
+    c_values_dict=c_values_dict,
+    n_restarts=3,
+    epochs=1000,
+    learning_rate=0.001,
+    physics_weight=0.1,
+    batch_size=32,
+    verbose=True
+)
+
+# =============================================================================
+# 3. EVALUATE MODEL
+# =============================================================================
+print("\n" + "=" * 60)
+print("Evaluating model on test set...")
+print("=" * 60)
+
+test_results = evaluate_model(
+    best_model,
+    split_data['X_test_scaled'],
+    split_data['y_test'],
+    loader.scaler_log_modulus,
+    loader.scaler_phase_angle,
+    device=device
+)
+
+test_results['true_values'] = split_data['y_test']
+
+print_evaluation_results(test_results, "Test Set Results")
+
+# =============================================================================
+# 4. SAVE RESULTS
+# =============================================================================
+print("\n" + "=" * 60)
+print("Saving model and results...")
+print("=" * 60)
+
+# Save model
+model_dir = save_model(
+    best_model, model_params,
+    loader.scaler_X,
+    loader.scaler_log_modulus,
+    loader.scaler_phase_angle,
+    c_values_dict,
+    loader.feature_names
+)
+
+# Save results to Excel
+save_results_to_excel(
+    'QuickStart_Results.xlsx',
+    test_results=test_results,
+    c_values_dict=c_values_dict,
+    model_params=model_params
+)
+
+print("\n" + "=" * 60)
+print("Quick start example completed!")
+print("=" * 60)
+print(f"Model saved to: {model_dir}")
+print(f"Results saved to: QuickStart_Results.xlsx")
+
+"""
+Sensitivity Analysis Module
+
+This module implements Sobol variance-based global sensitivity analysis
+to quantify the influence of input features on model predictions.
+"""
+
+import numpy as np
+import torch
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+
+
+def sobol_sensitivity_analysis(model, X, feature_names, n_samples=1024, 
+                               scaler_X=None, device='cpu'):
+
+    print(f"\nPerforming Sobol sensitivity analysis...")
+    print(f"Generating {n_samples * (2 * len(feature_names) + 2)} samples")
+    print("-" * 60)
+    
+    model.eval()
+    device = torch.device(device)
+    
+    # Define the problem for SALib
+    problem = {
+        'num_vars': len(feature_names),
+        'names': feature_names,
+        'bounds': [[X[:, i].min(), X[:, i].max()] for i in range(X.shape[1])]
+    }
+    
+    # Generate samples using Saltelli's scheme
+    param_values = saltelli.sample(problem, n_samples, calc_second_order=True)
+    
+    print(f"Generated {len(param_values)} parameter combinations")
+    print("Running model predictions...")
+    
+    # Scale samples if scaler provided
+    if scaler_X is not None:
+        param_values_scaled = scaler_X.transform(param_values)
+    else:
+        param_values_scaled = param_values
+    
+    # Run model predictions
+    with torch.no_grad():
+        X_tensor = torch.FloatTensor(param_values_scaled).to(device)
+        predictions = model(X_tensor).cpu().numpy()
+    
+    # Separate predictions for each output
+    Y_log_modulus = predictions[:, 0]
+    Y_phase_angle = predictions[:, 1]
+    
+    print("Analyzing Sobol indices...")
+    
+    # Perform Sobol analysis for each output
+    Si_log = sobol.analyze(
+        problem, Y_log_modulus, 
+        calc_second_order=True,
+        print_to_console=False
+    )
+    
+    Si_phase = sobol.analyze(
+        problem, Y_phase_angle,
+        calc_second_order=True,
+        print_to_console=False
+    )
+    
+    # Print results
+    print("\n" + "=" * 80)
+    print("SOBOL SENSITIVITY ANALYSIS RESULTS")
+    print("=" * 80)
+    
+    print("\nLog Dynamic Modulus Sensitivity:")
+    print("-" * 80)
+    _print_sobol_results(Si_log, feature_names)
+    
+    print("\nPhase Angle Sensitivity:")
+    print("-" * 80)
+    _print_sobol_results(Si_phase, feature_names)
+    
+    return {
+        'log_modulus': Si_log,
+        'phase_angle': Si_phase,
+        'feature_names': feature_names
+    }
+
+
+def _print_sobol_results(Si, feature_names):
+
+    print(f"\n{'Feature':<25} {'S1 (Main)':<15} {'ST (Total)':<15} {'Interaction':<15}")
+    print("-" * 70)
+    
+    for i, name in enumerate(feature_names):
+        s1 = Si['S1'][i]
+        st = Si['ST'][i]
+        interaction = st - s1
+        
+        print(f"{name:<25} {s1:>14.4f} {st:>14.4f} {interaction:>14.4f}")
+    
+    print("-" * 70)
+    print(f"\nInterpretation:")
+    print(f"  S1 (First-order): Direct effect of the variable")
+    print(f"  ST (Total-order): Total effect including all interactions")
+    print(f"  Interaction = ST - S1: Effect due to interactions with other variables")
+    print(f"\nHigher values indicate greater influence on the output.")
+
+
+def extract_sobol_dataframes(sobol_results):
+
+    import pandas as pd
+    
+    feature_names = sobol_results['feature_names']
+    Si_log = sobol_results['log_modulus']
+    Si_phase = sobol_results['phase_angle']
+    
+    # First-order and total-order indices
+    indices_log = pd.DataFrame({
+        'Feature': feature_names,
+        'S1 (Main Effect)': Si_log['S1'],
+        'S1_conf': Si_log['S1_conf'],
+        'ST (Total Effect)': Si_log['ST'],
+        'ST_conf': Si_log['ST_conf'],
+        'Interaction (ST-S1)': Si_log['ST'] - Si_log['S1']
+    })
+    
+    indices_phase = pd.DataFrame({
+        'Feature': feature_names,
+        'S1 (Main Effect)': Si_phase['S1'],
+        'S1_conf': Si_phase['S1_conf'],
+        'ST (Total Effect)': Si_phase['ST'],
+        'ST_conf': Si_phase['ST_conf'],
+        'Interaction (ST-S1)': Si_phase['ST'] - Si_phase['S1']
+    })
+    
+    # Second-order indices (pairwise interactions)
+    if 'S2' in Si_log:
+        n_features = len(feature_names)
+        s2_log_data = []
+        s2_phase_data = []
+        
+        for i in range(n_features):
+            for j in range(i + 1, n_features):
+                s2_log_data.append({
+                    'Feature_i': feature_names[i],
+                    'Feature_j': feature_names[j],
+                    'S2': Si_log['S2'][i, j],
+                    'S2_conf': Si_log['S2_conf'][i, j]
+                })
+                s2_phase_data.append({
+                    'Feature_i': feature_names[i],
+                    'Feature_j': feature_names[j],
+                    'S2': Si_phase['S2'][i, j],
+                    'S2_conf': Si_phase['S2_conf'][i, j]
+                })
+        
+        second_order_log = pd.DataFrame(s2_log_data)
+        second_order_phase = pd.DataFrame(s2_phase_data)
+    else:
+        second_order_log = None
+        second_order_phase = None
+    
+    return {
+        'first_order_log': indices_log,
+        'total_order_log': indices_log[['Feature', 'ST (Total Effect)', 'ST_conf']],
+        'first_order_phase': indices_phase,
+        'total_order_phase': indices_phase[['Feature', 'ST (Total Effect)', 'ST_conf']],
+        'second_order_log': second_order_log,
+        'second_order_phase': second_order_phase
+    }
+
+"""
+Training Module
+
+This module contains the training logic for MT-PCNN including:
+- Single model training with physics constraints
+- Random restart strategy
+- Cross-validation
+"""
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import numpy as np
+from sklearn.model_selection import KFold
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+
+from models import PCNNModel
+from physics_constraints import kramers_kronig_loss
+
+
+class Trainer:
+    
+    def __init__(self, model_params, device='cpu'):
+        self.model_params = model_params
+        self.device = torch.device(device)
+        self.model = None
+        self.best_model = None
+        self.training_history = {
+            'train_loss': [],
+            'val_loss': [],
+            'data_loss': [],
+            'physics_loss': []
+        }
+    
+    def build_model(self, input_dim):
+
+        model = PCNNModel(
+            input_dim=input_dim,
+            hidden_layers=self.model_params['hidden_layers'],
+            neurons_per_layer=self.model_params['neurons_per_layer'],
+            activation=self.model_params['activation']
+        ).to(self.device)
+        
+        return model
+    
+    def train_epoch(self, model, train_loader, optimizer, physics_weight, c_values_dict):
+
+        model.train()
+        total_loss = 0.0
+        total_data_loss = 0.0
+        total_physics_loss = 0.0
+        n_batches = 0
+        
+        for batch_X, batch_y, batch_mixture_ids in train_loader:
+            batch_X = batch_X.to(self.device)
+            batch_y = batch_y.to(self.device)
+            
+            # Get c values for this batch
+            c_values = np.array([c_values_dict[mid] for mid in batch_mixture_ids])
+            c_values_tensor = torch.tensor(c_values, dtype=torch.float32).to(self.device)
+            
+            # Forward pass
+            predictions = model(batch_X)
+            
+            # Data loss (MSE)
+            data_loss = nn.MSELoss()(predictions, batch_y)
+            
+            # Physics constraint loss (Kramers-Kronig)
+            physics_loss = kramers_kronig_loss(predictions, batch_X, c_values_tensor)
+            
+            # Combined loss
+            loss = data_loss + physics_weight * physics_loss
+            
+            # Backward pass
+            optimizer.zero_grad()
+            loss.backward()
+            
+            # Gradient clipping to prevent exploding gradients
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            
+            optimizer.step()
+            
+            # Accumulate losses
+            total_loss += loss.item()
+            total_data_loss += data_loss.item()
+            total_physics_loss += physics_loss.item()
+            n_batches += 1
+        
+        return (total_loss / n_batches, 
+                total_data_loss / n_batches,
+                total_physics_loss / n_batches)
+    
+    def validate(self, model, val_loader):
+
+        model.eval()
+        total_loss = 0.0
+        n_batches = 0
+        
+        with torch.no_grad():
+            for batch_X, batch_y, _ in val_loader:
+                batch_X = batch_X.to(self.device)
+                batch_y = batch_y.to(self.device)
+                
+                predictions = model(batch_X)
+                loss = nn.MSELoss()(predictions, batch_y)
+                
+                total_loss += loss.item()
+                n_batches += 1
+        
+        return total_loss / n_batches
+    
+    def train_single_model(self, X_train, y_train, X_val, y_val, 
+                          train_mixture_ids, c_values_dict,
+                          epochs=1000, learning_rate=0.001, 
+                          physics_weight=0.1, batch_size=32, 
+                          patience=100, verbose=True):
+
+        # Build model
+        input_dim = X_train.shape[1]
+        model = self.build_model(input_dim)
+        
+        # Create data loaders
+        train_dataset = torch.utils.data.TensorDataset(
+            torch.FloatTensor(X_train),
+            torch.FloatTensor(y_train),
+            torch.LongTensor(train_mixture_ids)
+        )
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=batch_size, shuffle=True
+        )
+        
+        val_dataset = torch.utils.data.TensorDataset(
+            torch.FloatTensor(X_val),
+            torch.FloatTensor(y_val),
+            torch.LongTensor(np.zeros(len(X_val)))  # Dummy for consistency
+        )
+        val_loader = torch.utils.data.DataLoader(
+            val_dataset, batch_size=batch_size, shuffle=False
+        )
+        
+        # Optimizer
+        optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+        
+        # Training history
+        history = {
+            'train_loss': [],
+            'val_loss': [],
+            'data_loss': [],
+            'physics_loss': []
+        }
+        
+        best_val_loss = float('inf')
+        best_model_state = None
+        epochs_without_improvement = 0
+        
+        for epoch in range(epochs):
+            # Train
+            train_loss, data_loss, physics_loss = self.train_epoch(
+                model, train_loader, optimizer, physics_weight, c_values_dict
+            )
+            
+            # Validate
+            val_loss = self.validate(model, val_loader)
+            
+            # Store history
+            history['train_loss'].append(train_loss)
+            history['val_loss'].append(val_loss)
+            history['data_loss'].append(data_loss)
+            history['physics_loss'].append(physics_loss)
+            
+            # Check for improvement
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_model_state = model.state_dict().copy()
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
+            
+            # Print progress
+            if verbose and (epoch + 1) % 100 == 0:
+                print(f"Epoch {epoch+1}/{epochs} - "
+                      f"Train Loss: {train_loss:.6f}, "
+                      f"Val Loss: {val_loss:.6f}, "
+                      f"Data: {data_loss:.6f}, "
+                      f"Physics: {physics_loss:.6f}")
+            
+            # Early stopping
+            if epochs_without_improvement >= patience:
+                if verbose:
+                    print(f"Early stopping at epoch {epoch+1}")
+                break
+        
+        # Load best model
+        model.load_state_dict(best_model_state)
+        
+        return model, best_val_loss, history
+    
+    def train_with_random_restarts(self, X_train, y_train, train_mixture_ids, 
+                                   c_values_dict, n_restarts=5, 
+                                   val_split=0.2, **train_kwargs):
+
+        print(f"\nTraining with {n_restarts} random restarts...")
+        print("=" * 60)
+        
+        # Split training data for validation
+        n_val = int(len(X_train) * val_split)
+        indices = np.random.permutation(len(X_train))
+        val_indices = indices[:n_val]
+        train_indices = indices[n_val:]
+        
+        X_train_split = X_train[train_indices]
+        y_train_split = y_train[train_indices]
+        X_val_split = X_train[val_indices]
+        y_val_split = y_train[val_indices]
+        train_mixture_ids_split = train_mixture_ids[train_indices]
+        
+        best_overall_model = None
+        best_overall_loss = float('inf')
+        
+        for restart in range(n_restarts):
+            print(f"\nRestart {restart + 1}/{n_restarts}")
+            print("-" * 60)
+            
+            model, val_loss, _ = self.train_single_model(
+                X_train_split, y_train_split,
+                X_val_split, y_val_split,
+                train_mixture_ids_split,
+                c_values_dict,
+                **train_kwargs
+            )
+            
+            print(f"Restart {restart + 1} final validation loss: {val_loss:.6f}")
+            
+            if val_loss < best_overall_loss:
+                best_overall_loss = val_loss
+                best_overall_model = model
+                print(f"New best model found! Loss: {val_loss:.6f}")
+        
+        print("\n" + "=" * 60)
+        print(f"Best model from {n_restarts} restarts - Loss: {best_overall_loss:.6f}")
+        
+        self.best_model = best_overall_model
+        return best_overall_model, best_overall_loss
+
+"""
+Utilities Module
+
+This module provides utility functions for saving/loading models,
+saving results to Excel, and other helper functions.
+"""
+
+import os
+import torch
+import joblib
+import pandas as pd
+from datetime import datetime
+
+
+def save_model(model, model_params, scaler_X, scaler_log_modulus, 
+               scaler_phase_angle, c_values_dict, feature_names,
+               save_dir='saved_models', model_name='mt_pcnn_model'):
+
+    # Create directory with timestamp
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    model_dir = os.path.join(save_dir, f"{model_name}_{timestamp}")
+    os.makedirs(model_dir, exist_ok=True)
+    
+    # Save model state
+    model_path = os.path.join(model_dir, 'model.pth')
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'model_params': model_params,
+        'c_values_dict': c_values_dict,
+        'feature_names': feature_names
+    }, model_path)
+    
+    # Save scalers
+    scaler_path = os.path.join(model_dir, 'scalers.pkl')
+    joblib.dump({
+        'scaler_X': scaler_X,
+        'scaler_log_modulus': scaler_log_modulus,
+        'scaler_phase_angle': scaler_phase_angle
+    }, scaler_path)
+    
+    print(f"\nModel saved successfully to: {model_dir}")
+    print(f"  - Model weights: {model_path}")
+    print(f"  - Scalers: {scaler_path}")
+    
+    return model_dir
+
+
+def load_model(model_dir, device='cpu'):
+
+    from models import PCNNModel
+    
+    device = torch.device(device)
+    
+    # Load model state
+    model_path = os.path.join(model_dir, 'model.pth')
+    checkpoint = torch.load(model_path, map_location=device)
+    
+    # Reconstruct model
+    model_params = checkpoint['model_params']
+    input_dim = len(checkpoint['feature_names'])
+    
+    model = PCNNModel(
+        input_dim=input_dim,
+        hidden_layers=model_params['hidden_layers'],
+        neurons_per_layer=model_params['neurons_per_layer'],
+        activation=model_params['activation']
+    ).to(device)
+    
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.eval()
+    
+    # Load scalers
+    scaler_path = os.path.join(model_dir, 'scalers.pkl')
+    scalers = joblib.load(scaler_path)
+    
+    print(f"\nModel loaded successfully from: {model_dir}")
+    
+    return {
+        'model': model,
+        'model_params': model_params,
+        'scalers': scalers,
+        'c_values_dict': checkpoint['c_values_dict'],
+        'feature_names': checkpoint['feature_names']
+    }
+
+
+def save_results_to_excel(filename, test_results=None, cv_results=None,
+                          sobol_results=None, c_values_dict=None,
+                          model_params=None, optimization_history=None):
+
+    with pd.ExcelWriter(filename, engine='openpyxl') as writer:
+        
+        # Test predictions
+        if test_results is not None and 'predictions' in test_results:
+            pred_df = pd.DataFrame({
+                'Predicted_Log_Modulus': test_results['predictions'][:, 0],
+                'Predicted_Phase_Angle': test_results['predictions'][:, 1],
+                'True_Log_Modulus': test_results.get('true_values', [None]*len(test_results['predictions']))[:, 0] if 'true_values' in test_results else None,
+                'True_Phase_Angle': test_results.get('true_values', [None]*len(test_results['predictions']))[:, 1] if 'true_values' in test_results else None,
+            })
+            
+            if 'true_values' in test_results:
+                pred_df['Error_Log_Modulus'] = pred_df['Predicted_Log_Modulus'] - pred_df['True_Log_Modulus']
+                pred_df['Error_Phase_Angle'] = pred_df['Predicted_Phase_Angle'] - pred_df['True_Phase_Angle']
+            
+            pred_df.to_excel(writer, sheet_name='Test_Predictions', index=False)
+        
+        # Test metrics
+        if test_results is not None:
+            metrics_data = {
+                'Metric': ['R²', 'RMSE', 'MAE'],
+                'Log_Modulus': [
+                    test_results.get('r2_log'),
+                    test_results.get('rmse_log'),
+                    test_results.get('mae_log')
+                ],
+                'Phase_Angle': [
+                    test_results.get('r2_phase'),
+                    test_results.get('rmse_phase'),
+                    test_results.get('mae_phase')
+                ]
+            }
+            metrics_df = pd.DataFrame(metrics_data)
+            metrics_df.to_excel(writer, sheet_name='Test_Metrics', index=False)
+        
+        # Cross-validation results
+        if cv_results is not None and len(cv_results) > 0:
+            cv_data = []
+            for result in cv_results:
+                cv_data.append({
+                    'Fold': result.get('fold'),
+                    'R2_Log_Modulus': result.get('r2_log'),
+                    'R2_Phase_Angle': result.get('r2_phase'),
+                    'RMSE_Log_Modulus': result.get('rmse_log'),
+                    'RMSE_Phase_Angle': result.get('rmse_phase'),
+                    'MAE_Log_Modulus': result.get('mae_log'),
+                    'MAE_Phase_Angle': result.get('mae_phase')
+                })
+            
+            cv_df = pd.DataFrame(cv_data)
+            
+            # Add summary statistics
+            summary_row = {
+                'Fold': 'Mean ± Std',
+                'R2_Log_Modulus': f"{cv_df['R2_Log_Modulus'].mean():.4f} ± {cv_df['R2_Log_Modulus'].std():.4f}",
+                'R2_Phase_Angle': f"{cv_df['R2_Phase_Angle'].mean():.4f} ± {cv_df['R2_Phase_Angle'].std():.4f}",
+                'RMSE_Log_Modulus': f"{cv_df['RMSE_Log_Modulus'].mean():.4f} ± {cv_df['RMSE_Log_Modulus'].std():.4f}",
+                'RMSE_Phase_Angle': f"{cv_df['RMSE_Phase_Angle'].mean():.4f} ± {cv_df['RMSE_Phase_Angle'].std():.4f}",
+                'MAE_Log_Modulus': f"{cv_df['MAE_Log_Modulus'].mean():.4f} ± {cv_df['MAE_Log_Modulus'].std():.4f}",
+                'MAE_Phase_Angle': f"{cv_df['MAE_Phase_Angle'].mean():.4f} ± {cv_df['MAE_Phase_Angle'].std():.4f}"
+            }
+            cv_df = pd.concat([cv_df, pd.DataFrame([summary_row])], ignore_index=True)
+            
+            cv_df.to_excel(writer, sheet_name='Cross_Validation', index=False)
+        
+        # C values
+        if c_values_dict is not None:
+            c_df = pd.DataFrame([
+                {'Mixture_ID': k, 'C_Value': v}
+                for k, v in c_values_dict.items()
+            ])
+            c_df.to_excel(writer, sheet_name='C_Values', index=False)
+        
+        # Sobol indices
+        if sobol_results is not None:
+            from sensitivity_analysis import extract_sobol_dataframes
+            sobol_dfs = extract_sobol_dataframes(sobol_results)
+            
+            if sobol_dfs['first_order_log'] is not None:
+                sobol_dfs['first_order_log'].to_excel(
+                    writer, sheet_name='Sobol_Log_Modulus', index=False
+                )
+            
+            if sobol_dfs['first_order_phase'] is not None:
+                sobol_dfs['first_order_phase'].to_excel(
+                    writer, sheet_name='Sobol_Phase_Angle', index=False
+                )
+            
+            if sobol_dfs['second_order_log'] is not None:
+                sobol_dfs['second_order_log'].to_excel(
+                    writer, sheet_name='Sobol_Second_Order_Log', index=False
+                )
+            
+            if sobol_dfs['second_order_phase'] is not None:
+                sobol_dfs['second_order_phase'].to_excel(
+                    writer, sheet_name='Sobol_Second_Order_Phase', index=False
+                )
+        
+        # Model hyperparameters
+        if model_params is not None:
+            params_df = pd.DataFrame([
+                {'Parameter': k, 'Value': v}
+                for k, v in model_params.items()
+            ])
+            params_df.to_excel(writer, sheet_name='Model_Parameters', index=False)
+        
+        # Optimization history
+        if optimization_history is not None and len(optimization_history) > 0:
+            from optimization import format_optimization_history
+            opt_df = format_optimization_history(optimization_history)
+            opt_df.to_excel(writer, sheet_name='Optimization_History', index=False)
+    
+    print(f"\nResults saved to: {filename}")
+    return filename
