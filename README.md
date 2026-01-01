@@ -1,12 +1,12 @@
 
 # MT-PCNN: Multi-Task Physics-Constrained Neural Network
-A physics-constrained neural network for predicting dynamic modulus and phase angle of asphalt mixtures using Kramers-Kronig relations as physical constraints.
+A multi-task physics-constrained neural network for predicting dynamic modulus and phase angle of asphalt mixtures using Kramers-Kronig relations as physical constraints.
 
 ## Overview
 
 This repository implements a Multi-Task Physics-Constrained Neural Network (MT-PCNN) that simultaneously predicts:
-- **Dynamic Modulus (|E*|)**: Material stiffness under dynamic loading
-- **Phase Angle (φ)**: Viscoelastic phase lag
+- *Dynamic Modulus (|E*|)*: Material stiffness under dynamic loading
+- *Phase Angle*: Viscoelastic phase lag
 
 The model incorporates Kramers-Kronig relations as physics-based constraints to ensure thermodynamic consistency between predictions.
 
@@ -104,19 +104,6 @@ where:
 
 ```
 
-## Citation
-
-If you use this code in your research, please cite:
-
-```bibtex
-@software{mt_pcnn_2024,
-  title = {MT-PCNN: Multi-Task Physics-Constrained Neural Network for Asphalt Mixture Property Prediction},
-  author = {Your Name},
-  year = {2024},
-  url = {https://github.com/yourusername/mt-pcnn}
-}
-```
-
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
@@ -125,13 +112,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-## Contact
 
-For questions or issues, please open an issue on GitHub or contact [your.email@example.com].
-
-## Acknowledgments
-
-- Kramers-Kronig relations for viscoelastic materials
-- PyTorch deep learning framework
-- Scikit-optimize for Bayesian optimization
-- SALib for sensitivity analysis
