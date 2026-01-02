@@ -23,8 +23,8 @@ The model incorporates Kramers-Kronig relations as physics-based constraints to 
 model/
 ├── main.py                      # Main pipeline script
 ├── models.py                    # Neural network architecture
-├── physics_constraints.py       # Kramers-Kronig relations and c-value estimation
-├── data_loader.py              # Data loading and preprocessing
+├── physics_constraints.py       # Kramers-Kronig relations
+├── data_loader.py               # Data loading and preprocessing
 ├── trainer.py                   # Training logic with random restarts
 ├── evaluation.py                # Model evaluation and cross-validation
 ├── sensitivity_analysis.py      # Sobol sensitivity analysis
